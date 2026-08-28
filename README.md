@@ -1,0 +1,1 @@
+This is a sample project to showcase VoIP call assistance for a "sample" Forex automated answering agent. It involves - Vapi orchestrator tool for speech to text conversion, Groq for feedback generation and interaction of the system with the user using a text to synthetic voice conversion.

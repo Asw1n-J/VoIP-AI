@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <title>VoIP AI Mic Interface</title>
+  <head>
+    <style>
+      body {
+        background-color: #0d1117;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .callcard {
+        background-color: #161b22;
+        border-radius: 20%;
+        align-items: center;
+        justify-content: center;
+        display: flex;
+        flex-direction: column;
+        width: 320px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        text-align: center;
+        padding: 3.5rem;
+      }
+      .callbtn {
+        border: none;
+        cursor: pointer;
+        height: 70px;
+        width: 100%;
+        border-radius: 6px;
+        margin-bottom: 2%;
+        font-size: large;
+      }
+      .constatus {
+        background-color: rgba(128, 128, 128, 0.183);
+        color: grey;
+        margin-top: 5%;
+        padding: 4px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="callcard">
+      <h1 style="color: white; margin-bottom: 50px">Connect to XYZ Forex</h1>
+      <button class="callbtn" style="background-color: rgba(0, 215, 0, 0.797)">
+        Start Call
+      </button>
+      <button class="callbtn" style="background-color: rgba(255, 0, 0, 0.751)">
+        End Call
+      </button>
+      <div class="constatus">Connection Status: Disconnected</div>
+    </div>
+  </body>
+</html>

@@ -31,7 +31,7 @@
         margin-bottom: 2%;
         font-size: large;
       }
-      .constatus {
+      .connstatus {
         background-color: rgba(128, 128, 128, 0.183);
         color: grey;
         margin-top: 5%;
@@ -42,13 +42,66 @@
   <body>
     <div class="callcard">
       <h1 style="color: white; margin-bottom: 50px">Connect to XYZ Forex</h1>
-      <button class="callbtn" style="background-color: rgba(0, 215, 0, 0.797)">
+      <button
+        id="startbtn"
+        class="callbtn"
+        style="background-color: rgba(0, 215, 0, 0.797)"
+      >
         Start Call
       </button>
-      <button class="callbtn" style="background-color: rgba(255, 0, 0, 0.751)">
+      <button
+        id="endbtn"
+        class="callbtn"
+        style="background-color: rgba(255, 0, 0, 0.751)"
+      >
         End Call
       </button>
-      <div class="constatus">Connection Status: Disconnected</div>
+      <div id="connstat" class="connstatus">
+        Connection Status: Disconnected
+      </div>
     </div>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+      const startbtn = document.getElementById("startbtn");
+      const endbtn = document.getElementById("endbtn");
+      const statusDiv = document.getElementById("connstat");
+      const remoteAudio = document.getElementById("remoteAudio");
+
+      let localStream = null;
+      let peerConnection = null;
+
+      function updateStatus(stateText) {
+        statusDiv.innerText = `Connection Status: ${stateText}`;
+      }
+
+      startbtn.onclick = async () => {
+        try {
+          updateStatus("Requesting Mic...");
+          localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+          console.log("Mic connected succesfully");
+          updateStatus("Mic Connected");
+
+          peerConnection = new RTCPeerConnection();
+
+          localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+          });
+          peerConnection.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+              remoteAudio.srcObject = event.streams[0];
+            }
+          };
+          console.log("WebRTC Connected");
+          updateStatus("WebRTC Ready");
+        } catch (err) {
+          console.error(err);
+          updateStatus("Failed to Connect");
+        }
+      };
+    </script>
   </body>
 </html>

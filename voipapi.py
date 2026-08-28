@@ -1,10 +1,8 @@
 import os
 import random
+import requests
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 
@@ -13,8 +11,9 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("supabase_url")
 SUPABASE_KEY = os.getenv("supabase_key")
-GMAIL_USER = os.getenv("gmail_address")
-GMAIL_PASSWORD = os.getenv("gmail_app_password")
+EMAILJS_SERVICE_ID = os.getenv("emailjs_service_id")
+EMAILJS_TEMPLATE_ID = os.getenv("emailjs_template_id")
+EMAILJS_PUBLIC_KEY = os.getenv("emailjs_public_key")
 
 
 if not SUPABASE_KEY or not SUPABASE_URL:
@@ -25,20 +24,24 @@ supabase: Client = create_client(SUPABASE_URL,SUPABASE_KEY)
 app = FastAPI(title="VoIP AI Backend")
 
 def send_email_otp(to_email:str, pin:str):
-    msg = MIMEMultipart()
-    msg["From"] = f"Forex OTP for verification"
-    msg["To"] = to_email
-    msg["Subject"] = f"{pin} is your Forex Security Code"
+    url = "https://api.emailjs.com/api/v1.0/email/send"
 
-    body = (
-        f"Hello,\nYour 4 digit forex security code is {pin}"
-    )
-    msg.attach(MIMEText(body,"plain"))
+    payload = {
+        "service_id": EMAILJS_SERVICE_ID,
+        "template_id": EMAILJS_TEMPLATE_ID,
+        "user_id": EMAILJS_PUBLIC_KEY,
+        "template_params": {
+            "to_email": to_email,
+            "pin": pin,
+            "message": f"{pin} is your Forex Security Code",
+            "name": "XYZ Forex"
+        }
+    }
 
-    with smtplib.SMTP("smtp.gmail.com",587) as server:
-        server.starttls()
-        server.login(GMAIL_USER,GMAIL_PASSWORD)
-        server.sendmail(GMAIL_USER, to_email, msg.as_string())
+    response = requests.post(url, json=payload)
+    
+    if response.status_code != 200:
+        raise Exception(f"EmailJS Error ({response.status_code}): {response.text}")
 
 
 

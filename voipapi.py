@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 
 load_dotenv()
@@ -22,6 +23,14 @@ if not SUPABASE_KEY or not SUPABASE_URL:
 supabase: Client = create_client(SUPABASE_URL,SUPABASE_KEY)
 
 app = FastAPI(title="VoIP AI Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def send_email_otp(to_email:str, pin:str):
     url = "https://api.emailjs.com/api/v1.0/email/send"

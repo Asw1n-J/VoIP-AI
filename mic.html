@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
-  <title>VoIP AI Mic Interface</title>
   <head>
+    <title>VoIP AI Mic Interface</title>
     <style>
       body {
         background-color: #0d1117;
@@ -29,7 +29,19 @@
         width: 100%;
         border-radius: 6px;
         margin-bottom: 2%;
-        font-size: large;
+        font-size: x-large;
+      }
+      #startbtn {
+        background-color: rgb(0, 215, 0);
+      }
+      #startbtn:hover {
+        background-color: rgb(9, 255, 9);
+      }
+      #endbtn {
+        background-color: rgb(220, 26, 26);
+      }
+      #endbtn:hover {
+        background-color: rgb(255, 0, 0);
       }
       .connstatus {
         background-color: rgba(128, 128, 128, 0.183);
@@ -38,68 +50,231 @@
         padding: 4px 12px;
       }
     </style>
+    <script src="config.js"></script>
   </head>
   <body>
     <div class="callcard">
       <h1 style="color: white; margin-bottom: 50px">Connect to XYZ Forex</h1>
-      <button
-        id="startbtn"
-        class="callbtn"
-        style="background-color: rgba(0, 215, 0, 0.797)"
-      >
-        Start Call
-      </button>
-      <button
-        id="endbtn"
-        class="callbtn"
-        style="background-color: rgba(255, 0, 0, 0.751)"
-      >
-        End Call
-      </button>
+      <button id="startbtn" class="callbtn">Start Call</button>
+      <button id="endbtn" class="callbtn">End Call</button>
       <div id="connstat" class="connstatus">
         Connection Status: Disconnected
       </div>
     </div>
-    <audio id="remoteAudio" autoplay></audio>
 
-    <script>
+    <script type="module">
+      import Vapi from "https://esm.sh/@vapi-ai/web";
+
+      const VAPI_PUBLIC_KEY = window.ENV.vapi_public_key;
+      const ASSISTANT_ID = window.ENV.vapi_assistant_id;
+
       const startbtn = document.getElementById("startbtn");
       const endbtn = document.getElementById("endbtn");
       const statusDiv = document.getElementById("connstat");
-      const remoteAudio = document.getElementById("remoteAudio");
 
-      let localStream = null;
-      let peerConnection = null;
+      const vapi = new Vapi(VAPI_PUBLIC_KEY);
+      let isConnected = false;
 
       function updateStatus(stateText) {
         statusDiv.innerText = `Connection Status: ${stateText}`;
       }
 
-      startbtn.onclick = async () => {
-        try {
-          updateStatus("Requesting Mic...");
-          localStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: false,
-          });
-          console.log("Mic connected succesfully");
-          updateStatus("Mic Connected");
+      vapi.on("message", async (message) => {
+        if (message.type === "tool-calls" || message.type === "function-call") {
+          const toolCalls = message.toolCalls || [message.functionCall];
 
-          peerConnection = new RTCPeerConnection();
+          for (const call of toolCalls) {
+            const func = call.function || call;
+            const toolCallId = call.id; // Extract unique tool call ID
+            const args =
+              typeof func.arguments === "string"
+                ? JSON.parse(func.arguments)
+                : func.arguments;
 
-          localStream.getTracks().forEach((track) => {
-            peerConnection.addTrack(track, localStream);
-          });
-          peerConnection.ontrack = (event) => {
-            if (event.streams && event.streams[0]) {
-              remoteAudio.srcObject = event.streams[0];
+            // TOOL 1: Initial Credential Verification
+            if (func.name === "return_extracted_data") {
+              updateStatus("Verifying Credentials...");
+
+              try {
+                const res = await fetch(`${window.ENV.backend_url}/otp`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    account_number: String(args.account_number),
+                    mobile: String(args.mobile),
+                  }),
+                });
+
+                if (res.ok) {
+                  updateStatus("Credentials Verified. Awaiting OTP...");
+                  vapi.send({
+                    type: "add-message",
+                    message: {
+                      role: "tool",
+                      toolCallId: toolCallId,
+                      content: JSON.stringify({
+                        status: "success",
+                        result:
+                          "Your details match. An OTP code has been sent to your email. Please speak the code once you receive it.",
+                      }),
+                    },
+                  });
+                } else {
+                  updateStatus("Invalid Credentials");
+                  vapi.send({
+                    type: "add-message",
+                    message: {
+                      role: "tool",
+                      toolCallId: toolCallId,
+                      content: JSON.stringify({
+                        status: "failed",
+                        result:
+                          "I could not find an account with those details. Please try again.",
+                      }),
+                    },
+                  });
+
+                  setTimeout(() => {
+                    vapi.stop();
+                    updateStatus("Disconnected");
+                  }, 6000);
+                }
+              } catch (err) {
+                updateStatus("API Error");
+                vapi.send({
+                  type: "add-message",
+                  message: {
+                    role: "tool",
+                    toolCallId: toolCallId,
+                    content: JSON.stringify({
+                      status: "error",
+                      result: "Connection error during verification.",
+                    }),
+                  },
+                });
+              }
             }
-          };
-          console.log("WebRTC Connected");
-          updateStatus("WebRTC Ready");
+
+            // TOOL 2: OTP Verification
+            if (func.name === "verify_otp") {
+              updateStatus("Verifying OTP...");
+
+              try {
+                const res = await fetch(
+                  `${window.ENV.backend_url}/verify-otp`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      account_number: String(args.account_number),
+                      mobile: String(args.mobile),
+                      pin: String(args.pin || args.otp),
+                    }),
+                  },
+                );
+
+                const data = await res.json();
+
+                if (res.ok) {
+                  updateStatus("Authentication Successful!");
+
+                  vapi.send({
+                    type: "add-message",
+                    message: {
+                      role: "tool",
+                      toolCallId: toolCallId,
+                      content: JSON.stringify({
+                        status: "success",
+                        result:
+                          data.message ||
+                          "Authentication successful! Welcome back to XYZ Forex. How can I help you today?",
+                      }),
+                    },
+                  });
+                } else {
+                  updateStatus(`OTP Failed: ${data.detail || "Incorrect OTP"}`);
+
+                  vapi.send({
+                    type: "add-message",
+                    message: {
+                      role: "tool",
+                      toolCallId: toolCallId,
+                      content: JSON.stringify({
+                        status: "failed",
+                        result:
+                          data.detail ||
+                          "That OTP code is invalid or has expired. Please check your email and speak the code again.",
+                      }),
+                    },
+                  });
+                }
+              } catch (err) {
+                updateStatus("API Error");
+
+                vapi.send({
+                  type: "add-message",
+                  message: {
+                    role: "tool",
+                    toolCallId: toolCallId,
+                    content: JSON.stringify({
+                      status: "error",
+                      result:
+                        "Error connecting to OTP verification service. Please try again.",
+                    }),
+                  },
+                });
+              }
+            }
+          }
+        }
+      });
+
+      vapi.on("call-start", () => {
+        isConnected = true;
+        updateStatus("Connected");
+      });
+
+      vapi.on("call-end", () => {
+        isConnected = false;
+        updateStatus("Disconnected");
+      });
+
+      vapi.on("speech-start", () => {
+        if (isConnected) updateStatus("AI Speaking...");
+      });
+
+      vapi.on("speech-end", () => {
+        if (isConnected) updateStatus("Listening...");
+      });
+
+      vapi.on("error", (err) => {
+        console.error("Vapi Error:", err);
+        isConnected = false;
+        updateStatus("Connection Error");
+      });
+
+      startbtn.onclick = async () => {
+        if (isConnected) return;
+        try {
+          updateStatus("Connecting...");
+          await vapi.start(ASSISTANT_ID);
         } catch (err) {
-          console.error(err);
+          console.error("Failed to start call:", err);
+          isConnected = false;
           updateStatus("Failed to Connect");
+        }
+      };
+
+      endbtn.onclick = () => {
+        isConnected = false;
+        updateStatus("Disconnecting...");
+
+        try {
+          vapi.stop();
+        } catch (err) {
+          console.error("Error stopping vapi:", err);
+        } finally {
+          updateStatus("Disconnected");
         }
       };
     </script>

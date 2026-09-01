@@ -1,3 +1,5 @@
 .env
 voipenv
 __pycache__
+config.js
+HTMLTEST.HTML

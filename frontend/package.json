@@ -1,0 +1,7 @@
+{
+  "name": "voip-frontend",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node -e \"const fs = require('fs'); let html = fs.readFileSync('index.html', 'utf8'); html = html.replace('__BACKEND_URL__', process.env.BACKEND_URL || '').replace('__VAPI_PUBLIC_KEY__', process.env.VAPI_PUBLIC_KEY || '').replace('__VAPI_ASSISTANT_ID__', process.env.VAPI_ASSISTANT_ID || ''); fs.writeFileSync('index.html', html);\""
+  }
+}

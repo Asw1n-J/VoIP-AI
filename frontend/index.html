@@ -50,7 +50,13 @@
         padding: 4px 12px;
       }
     </style>
-    <script src="config.js"></script>
+    <script>
+      window.ENV = {
+        backend_url: "__BACKEND_URL__",
+        vapi_public_key: "__VAPI_PUBLIC_KEY__",
+        vapi_assistant_id: "__VAPI_ASSISTANT_ID__",
+      };
+    </script>
   </head>
   <body>
     <div class="callcard">

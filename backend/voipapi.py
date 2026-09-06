@@ -3,10 +3,8 @@ import random
 import requests
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 
 load_dotenv()
 
@@ -16,13 +14,10 @@ EMAILJS_SERVICE_ID = os.getenv("emailjs_service_id")
 EMAILJS_TEMPLATE_ID = os.getenv("emailjs_template_id")
 EMAILJS_PUBLIC_KEY = os.getenv("emailjs_public_key")
 
-AC_NUM = None
-
-
 if not SUPABASE_KEY or not SUPABASE_URL:
     raise ValueError("No valid credentials for the DB")
 
-supabase: Client = create_client(SUPABASE_URL,SUPABASE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="VoIP AI Backend")
 
@@ -34,9 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def send_email_otp(to_email:str, pin:str):
+def send_email_otp(to_email: str, pin: str):
     url = "https://api.emailjs.com/api/v1.0/email/send"
-
     payload = {
         "service_id": EMAILJS_SERVICE_ID,
         "template_id": EMAILJS_TEMPLATE_ID,
@@ -48,122 +42,164 @@ def send_email_otp(to_email:str, pin:str):
             "name": "XYZ Forex"
         }
     }
-
-    response = requests.post(url, json=payload)
-    
+    response = requests.post(url, json=payload, timeout=5)
     if response.status_code != 200:
         raise Exception(f"EmailJS Error ({response.status_code}): {response.text}")
 
+def parse_vapi_or_flat_payload(data: dict):
+    """
+    Extracts tool call ID, function arguments, and detects whether
+    the request came as a Vapi Server Webhook or a flat JSON payload.
+    """
+    tool_call_id = None
+    args = {}
+    is_vapi_webhook = False
 
-
-class generateOTP(BaseModel):
-    account_number: str
-
-class verifyOTP(BaseModel):
-    account_number:str
-    pin: str
-
-@app.get("/")
-def home():
-    return {"status":"online", "message":"Forex DB is healthy"}
-
-
-@app.post("/otp")
-async def trigger_otp(request: Request):
-    global AC_NUM
-
-    data = await request.json()
-
-    # Extract account_number across flat JSON, query args, or Vapi's nested message wrapper
-    account_number = (
-        data.get("account_number")
-        or data.get("accountNumber")
-        or data.get("args", {}).get("account_number")
-    )
-
-    # If it came directly from a Vapi Server URL Webhook:
-    if not account_number and "message" in data:
+    if "message" in data:
+        is_vapi_webhook = True
         message = data.get("message", {})
         tool_calls = message.get("toolCalls") or message.get("toolWithToolCallList") or []
         if tool_calls:
-            # Handle standard Vapi tool call or toolWithToolCallList wrapper
             first_call = tool_calls[0]
-            func_args = (
+            tool_call_id = first_call.get("id") or first_call.get("toolCall", {}).get("id")
+            args = (
                 first_call.get("function", {}).get("arguments")
                 or first_call.get("toolCall", {}).get("function", {}).get("arguments")
                 or {}
             )
-            account_number = func_args.get("account_number") or func_args.get("accountNumber")
+            if isinstance(args, str):
+                import json
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+    else:
+        args = data
 
-    if not account_number:
-        raise HTTPException(
-            status_code=422,
-            detail="Missing 'account_number' in request payload."
-        )
+    return args, tool_call_id, is_vapi_webhook
 
-    clean_account = "".join(filter(str.isdigit, str(account_number)))
+def format_vapi_response(result_text: str, tool_call_id: str, is_webhook: bool):
+    """
+    Formats the response so Vapi receives the exact payload schema it requires.
+    """
+    if is_webhook and tool_call_id:
+        return {
+            "results": [
+                {
+                    "toolCallId": tool_call_id,
+                    "result": result_text
+                }
+            ]
+        }
+    return {
+        "success": True,
+        "result": result_text
+    }
 
-    res = (
-        supabase.table("forexdata")
-        .select("*")
-        .eq("account_number", clean_account)
-        .execute()
+@app.get("/")
+def home():
+    return {"status": "online", "message": "Forex DB is healthy"}
+
+@app.post("/otp")
+async def trigger_otp(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    args, tool_call_id, is_webhook = parse_vapi_or_flat_payload(data)
+
+    raw_account = (
+        args.get("account_number") 
+        or args.get("accountNumber") 
+        or args.get("account")
     )
 
-    if not res.data:
-        return {
-            "success": False,
-            "status": "error",
-            "detail": "account_not_found",
-            "message": f"Account number {clean_account} was not found."
-        }
+    if not raw_account:
+        return format_vapi_response(
+            "No account number was provided. Ask the user to state their account number clearly.",
+            tool_call_id,
+            is_webhook
+        )
 
-    AC_NUM = clean_account
+    clean_account = "".join(filter(str.isdigit, str(raw_account)))
+
+    try:
+        res = supabase.table("forexdata").select("*").eq("account_number", clean_account).execute()
+    except Exception as e:
+        return format_vapi_response(f"Database error: {str(e)}", tool_call_id, is_webhook)
+
+    if not res.data:
+        return format_vapi_response(
+            f"Account number {clean_account} was not found in our database. Ask the user to double check their account number.",
+            tool_call_id,
+            is_webhook
+        )
+
     user_email = "ddtestop@yopmail.com"
     pin = str(random.randint(1000, 9999))
 
-    supabase.table("forexdata").update({"pin": pin}).eq("account_number", clean_account).execute()
-
     try:
+        supabase.table("forexdata").update({"pin": pin}).eq("account_number", clean_account).execute()
         send_email_otp(user_email, pin)
-        return {
-            "success": True,
-            "status": "success",
-            "detail": "OTP sent",
-            "account_number": clean_account,
-            "email": user_email,
-            "message": "OTP sent and DB updated"
-        }
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
+        return format_vapi_response(
+            f"Account {clean_account} found, but sending the security email failed: {str(e)}",
+            tool_call_id,
+            is_webhook
+        )
 
-
-@app.post("/verify-otp")
-def verify_otp(payload: verifyOTP):
-
-    global AC_NUM
-
-    res=(
-        supabase.table("forexdata")
-        .select("*")
-        .eq("account_number", AC_NUM)
-        .eq("pin", payload.pin)
-        .execute()
+    return format_vapi_response(
+        f"Account number {clean_account} has been verified and an OTP security code was emailed to the user. Ask the user to provide the 4-digit security code.",
+        tool_call_id,
+        is_webhook
     )
 
+@app.post("/verify-otp")
+async def verify_otp(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    args, tool_call_id, is_webhook = parse_vapi_or_flat_payload(data)
+
+    raw_pin = args.get("pin") or args.get("otp") or args.get("code")
+    raw_account = args.get("account_number") or args.get("accountNumber")
+
+    if not raw_pin:
+        return format_vapi_response(
+            "PIN code was not provided. Ask the user for their 4-digit OTP code.",
+            tool_call_id,
+            is_webhook
+        )
+
+    clean_pin = "".join(filter(str.isdigit, str(raw_pin)))
+    clean_account = "".join(filter(str.isdigit, str(raw_account))) if raw_account else None
+
+    # Query DB with account_number if available, otherwise search strictly by PIN
+    query = supabase.table("forexdata").select("*").eq("pin", clean_pin)
+    if clean_account:
+        query = query.eq("account_number", clean_account)
+
+    try:
+        res = query.execute()
+    except Exception as e:
+        return format_vapi_response(f"Database verification error: {str(e)}", tool_call_id, is_webhook)
+
     if not res.data:
-        return{
-            "status":"falied",
-            "detail":"access denied",
-            "message": "The pin doesnt match",
-        }
+        return format_vapi_response(
+            "Access denied. The PIN provided is incorrect. Please ask the user to re-enter their PIN.",
+            tool_call_id,
+            is_webhook
+        )
 
     record = res.data[0]
+    account_status = record.get("status", "Active")
+    issue = record.get("issue", "None")
 
-    return{
-        "detail":"access granted",
-        "message":"OTP verified successfully",
-        "status": record.get("status"),
-        "issue": record.get("issue")
-    }
+    return format_vapi_response(
+        f"Access granted! OTP verified successfully. Account Status: {account_status}. Account Issue: {issue}.",
+        tool_call_id,
+        is_webhook
+    )

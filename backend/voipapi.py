@@ -16,6 +16,8 @@ EMAILJS_SERVICE_ID = os.getenv("emailjs_service_id")
 EMAILJS_TEMPLATE_ID = os.getenv("emailjs_template_id")
 EMAILJS_PUBLIC_KEY = os.getenv("emailjs_public_key")
 
+AC_NUM = None
+
 
 if not SUPABASE_KEY or not SUPABASE_URL:
     raise ValueError("No valid credentials for the DB")
@@ -69,6 +71,8 @@ def home():
 @app.post("/otp")
 def trigger_otp(payload: generateOTP):
 
+    global AC_NUM
+
     res = (
         supabase.table("forexdata")
         .select("*")
@@ -81,7 +85,9 @@ def trigger_otp(payload: generateOTP):
             "detail": "account number is invalid"
         }
 
-    user_email = "muttathupadomaswin@gmail.com"
+    AC_NUM = payload.account_number
+
+    user_email = "ddtestop@yopmail.com"
     pin = str(random.randint(1000,9999))
 
     supabase.table("forexdata").update({"pin":pin}).eq("account_number",payload.account_number).execute()
@@ -103,10 +109,12 @@ def trigger_otp(payload: generateOTP):
 @app.post("/verify-otp")
 def verify_otp(payload: verifyOTP):
 
+    global AC_NUM
+
     res=(
         supabase.table("forexdata")
         .select("*")
-        .eq("account_number", payload.account_number)
+        .eq("account_number", AC_NUM)
         .eq("pin", payload.pin)
         .execute()
     )

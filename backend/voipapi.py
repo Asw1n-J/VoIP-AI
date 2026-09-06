@@ -56,11 +56,9 @@ def send_email_otp(to_email:str, pin:str):
 
 class generateOTP(BaseModel):
     account_number: str
-    mobile: str
 
 class verifyOTP(BaseModel):
     account_number:str
-    mobile: str
     pin: str
 
 @app.get("/")
@@ -75,27 +73,24 @@ def trigger_otp(payload: generateOTP):
         supabase.table("forexdata")
         .select("*")
         .eq("account_number", payload.account_number)
-        .eq("mobile", payload.mobile)
         .execute()
     )
 
     if not res.data:
-        raise HTTPException(
-            status_code=404,
-            detail = f"The credentials are invalid",
-        )
+        return{
+            "detail": "account number is invalid"
+        }
 
-    user_email = "ddtestop@yopmail.com"
+    user_email = "muttathupadomaswin@gmail.com"
     pin = str(random.randint(1000,9999))
 
-    supabase.table("forexdata").update({"pin":pin}).eq("account_number",payload.account_number).eq("mobile", payload.mobile).execute()
+    supabase.table("forexdata").update({"pin":pin}).eq("account_number",payload.account_number).execute()
 
     try:
         send_email_otp(user_email, pin)
         return{
-            "status":"sent",
+            "detail":"OTP sent",
             "account_number":payload.account_number,
-            "mobile": payload.mobile,
             "email":user_email,
             "pin": pin,
             "message": "OTP sent and DB updated"
@@ -112,7 +107,6 @@ def verify_otp(payload: verifyOTP):
         supabase.table("forexdata")
         .select("*")
         .eq("account_number", payload.account_number)
-        .eq("mobile", payload.mobile)
         .eq("pin", payload.pin)
         .execute()
     )
@@ -120,12 +114,15 @@ def verify_otp(payload: verifyOTP):
     if not res.data:
         return{
             "status":"falied",
-            "access":"denied",
+            "detail":"access denied",
             "message": "The pin doesnt match",
         }
 
+    record = res.data[0]
+
     return{
-        "status":"success",
-        "access":"granted",
-        "message":"OTP verified successfully"
+        "detail":"access granted",
+        "message":"OTP verified successfully",
+        "status": record.get("status"),
+        "issue": record.get("issue")
     }

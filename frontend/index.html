@@ -80,6 +80,7 @@
 
       const vapi = new Vapi(VAPI_PUBLIC_KEY);
       let isConnected = false;
+      let currentAccountNumber = "";
 
       function updateStatus(stateText) {
         statusDiv.innerText = `Connection Status: ${stateText}`;
@@ -91,59 +92,48 @@
 
           for (const call of toolCalls) {
             const func = call.function || call;
-            const toolCallId = call.id; // Extract unique tool call ID
+            const toolCallId = call.id;
             const args =
               typeof func.arguments === "string"
                 ? JSON.parse(func.arguments)
                 : func.arguments;
 
-            // TOOL 1: Initial Credential Verification
-            if (func.name === "return_extracted_data") {
-              updateStatus("Verifying Credentials...");
+            // TOOL 1: Trigger OTP
+            if (
+              func.name === "trigger_otp" ||
+              func.name === "return_extracted_data"
+            ) {
+              updateStatus("Verifying Account Number...");
+
+              const cleanAccNum = String(args.account_number).replace(
+                /\D/g,
+                "",
+              );
+              currentAccountNumber = cleanAccNum;
 
               try {
                 const res = await fetch(`${window.ENV.backend_url}/otp`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    account_number: String(args.account_number),
-                  }),
+                  body: JSON.stringify({ account_number: cleanAccNum }),
                 });
 
-                if (res.ok) {
-                  updateStatus("Credentials Verified. Awaiting OTP...");
-                  vapi.send({
-                    type: "add-message",
-                    message: {
-                      role: "tool",
-                      toolCallId: toolCallId,
-                      content: JSON.stringify({
-                        status: "success",
-                        result:
-                          "Your details match. An OTP code has been sent to your email. Please speak the code once you receive it.",
-                      }),
-                    },
-                  });
-                } else {
-                  updateStatus("Invalid Credentials");
-                  vapi.send({
-                    type: "add-message",
-                    message: {
-                      role: "tool",
-                      toolCallId: toolCallId,
-                      content: JSON.stringify({
-                        status: "failed",
-                        result:
-                          "I could not find an account with those details. Please try again.",
-                      }),
-                    },
-                  });
+                const data = await res.json();
 
-                  setTimeout(() => {
-                    vapi.stop();
-                    updateStatus("Disconnected");
-                  }, 6000);
-                }
+                updateStatus(
+                  res.ok
+                    ? "OTP Sent. Awaiting Entry..."
+                    : "Invalid Account Number",
+                );
+
+                vapi.send({
+                  type: "add-message",
+                  message: {
+                    role: "tool",
+                    toolCallId: toolCallId,
+                    content: JSON.stringify(data),
+                  },
+                });
               } catch (err) {
                 updateStatus("API Error");
                 vapi.send({
@@ -151,18 +141,17 @@
                   message: {
                     role: "tool",
                     toolCallId: toolCallId,
-                    content: JSON.stringify({
-                      status: "error",
-                      result: "Connection error during verification.",
-                    }),
+                    content: JSON.stringify({ detail: "error" }),
                   },
                 });
               }
             }
 
-            // TOOL 2: OTP Verification
+            // TOOL 2: Verify OTP
             if (func.name === "verify_otp") {
               updateStatus("Verifying OTP...");
+
+              const cleanPin = String(args.pin || args.otp).replace(/\D/g, "");
 
               try {
                 const res = await fetch(
@@ -171,61 +160,36 @@
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                      account_number: String(args.account_number),
-                      mobile: String(args.mobile),
-                      pin: String(args.pin || args.otp),
+                      account_number:
+                        currentAccountNumber ||
+                        String(args.account_number || ""),
+                      pin: cleanPin,
                     }),
                   },
                 );
 
                 const data = await res.json();
 
-                if (res.ok) {
-                  updateStatus("Authentication Successful!");
-
-                  vapi.send({
-                    type: "add-message",
-                    message: {
-                      role: "tool",
-                      toolCallId: toolCallId,
-                      content: JSON.stringify({
-                        status: "success",
-                        result:
-                          data.message ||
-                          "Authentication successful! Welcome back to XYZ Forex. How can I help you today?",
-                      }),
-                    },
-                  });
-                } else {
-                  updateStatus(`OTP Failed: ${data.detail || "Incorrect OTP"}`);
-
-                  vapi.send({
-                    type: "add-message",
-                    message: {
-                      role: "tool",
-                      toolCallId: toolCallId,
-                      content: JSON.stringify({
-                        status: "failed",
-                        result:
-                          data.detail ||
-                          "That OTP code is invalid or has expired. Please check your email and speak the code again.",
-                      }),
-                    },
-                  });
-                }
-              } catch (err) {
-                updateStatus("API Error");
+                updateStatus(
+                  res.ok ? "Authentication Successful!" : "OTP Failed",
+                );
 
                 vapi.send({
                   type: "add-message",
                   message: {
                     role: "tool",
                     toolCallId: toolCallId,
-                    content: JSON.stringify({
-                      status: "error",
-                      result:
-                        "Error connecting to OTP verification service. Please try again.",
-                    }),
+                    content: JSON.stringify(data),
+                  },
+                });
+              } catch (err) {
+                updateStatus("API Error");
+                vapi.send({
+                  type: "add-message",
+                  message: {
+                    role: "tool",
+                    toolCallId: toolCallId,
+                    content: JSON.stringify({ detail: "error" }),
                   },
                 });
               }
@@ -241,6 +205,7 @@
 
       vapi.on("call-end", () => {
         isConnected = false;
+        currentAccountNumber = "";
         updateStatus("Disconnected");
       });
 
@@ -272,6 +237,7 @@
 
       endbtn.onclick = () => {
         isConnected = false;
+        currentAccountNumber = "";
         updateStatus("Disconnecting...");
 
         try {

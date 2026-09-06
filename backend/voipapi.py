@@ -69,41 +69,74 @@ def home():
 
 
 @app.post("/otp")
-def trigger_otp(payload: generateOTP):
-
+async def trigger_otp(request: Request):
     global AC_NUM
+
+    data = await request.json()
+
+    # Extract account_number across flat JSON, query args, or Vapi's nested message wrapper
+    account_number = (
+        data.get("account_number")
+        or data.get("accountNumber")
+        or data.get("args", {}).get("account_number")
+    )
+
+    # If it came directly from a Vapi Server URL Webhook:
+    if not account_number and "message" in data:
+        message = data.get("message", {})
+        tool_calls = message.get("toolCalls") or message.get("toolWithToolCallList") or []
+        if tool_calls:
+            # Handle standard Vapi tool call or toolWithToolCallList wrapper
+            first_call = tool_calls[0]
+            func_args = (
+                first_call.get("function", {}).get("arguments")
+                or first_call.get("toolCall", {}).get("function", {}).get("arguments")
+                or {}
+            )
+            account_number = func_args.get("account_number") or func_args.get("accountNumber")
+
+    if not account_number:
+        raise HTTPException(
+            status_code=422,
+            detail="Missing 'account_number' in request payload."
+        )
+
+    clean_account = "".join(filter(str.isdigit, str(account_number)))
 
     res = (
         supabase.table("forexdata")
         .select("*")
-        .eq("account_number", payload.account_number)
+        .eq("account_number", clean_account)
         .execute()
     )
 
     if not res.data:
-        return{
-            "detail": "account number is invalid"
+        return {
+            "success": False,
+            "status": "error",
+            "detail": "account_not_found",
+            "message": f"Account number {clean_account} was not found."
         }
 
-    AC_NUM = payload.account_number
-
+    AC_NUM = clean_account
     user_email = "ddtestop@yopmail.com"
-    pin = str(random.randint(1000,9999))
+    pin = str(random.randint(1000, 9999))
 
-    supabase.table("forexdata").update({"pin":pin}).eq("account_number",payload.account_number).execute()
+    supabase.table("forexdata").update({"pin": pin}).eq("account_number", clean_account).execute()
 
     try:
         send_email_otp(user_email, pin)
-        return{
-            "detail":"OTP sent",
-            "account_number":payload.account_number,
-            "email":user_email,
-            "pin": pin,
+        return {
+            "success": True,
+            "status": "success",
+            "detail": "OTP sent",
+            "account_number": clean_account,
+            "email": user_email,
             "message": "OTP sent and DB updated"
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail = f"Failed to send email: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 
 @app.post("/verify-otp")

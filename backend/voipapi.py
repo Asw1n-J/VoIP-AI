@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import requests
 from dotenv import load_dotenv
@@ -49,14 +50,13 @@ def send_email_otp(to_email: str, pin: str):
 def parse_vapi_or_flat_payload(data: dict):
     """
     Extracts tool call ID, function arguments, and detects whether
-    the request came as a Vapi Server Webhook or a flat JSON payload.
+    the request came as a Vapi Server Webhook or a direct flat JSON payload.
     """
     tool_call_id = None
     args = {}
-    is_vapi_webhook = False
+    is_vapi_webhook = "message" in data or "toolCalls" in data
 
     if "message" in data:
-        is_vapi_webhook = True
         message = data.get("message", {})
         tool_calls = message.get("toolCalls") or message.get("toolWithToolCallList") or []
         if tool_calls:
@@ -67,14 +67,21 @@ def parse_vapi_or_flat_payload(data: dict):
                 or first_call.get("toolCall", {}).get("function", {}).get("arguments")
                 or {}
             )
-            if isinstance(args, str):
-                import json
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {}
+    elif "toolCalls" in data:
+        tool_calls = data.get("toolCalls", [])
+        if tool_calls:
+            first_call = tool_calls[0]
+            tool_call_id = first_call.get("id")
+            args = first_call.get("function", {}).get("arguments", {})
     else:
         args = data
+
+    # Parse JSON string arguments if Vapi sends raw JSON string
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            args = {}
 
     return args, tool_call_id, is_vapi_webhook
 
@@ -82,11 +89,11 @@ def format_vapi_response(result_text: str, tool_call_id: str, is_webhook: bool):
     """
     Formats the response so Vapi receives the exact payload schema it requires.
     """
-    if is_webhook and tool_call_id:
+    if is_webhook:
         return {
             "results": [
                 {
-                    "toolCallId": tool_call_id,
+                    "toolCallId": tool_call_id or "call_default",
                     "result": result_text
                 }
             ]
@@ -113,16 +120,24 @@ async def trigger_otp(request: Request):
         args.get("account_number") 
         or args.get("accountNumber") 
         or args.get("account")
+        or args.get("account_no")
     )
 
     if not raw_account:
         return format_vapi_response(
-            "No account number was provided. Ask the user to state their account number clearly.",
+            "No account number was provided. Please ask the user to state their account number clearly.",
             tool_call_id,
             is_webhook
         )
 
     clean_account = "".join(filter(str.isdigit, str(raw_account)))
+
+    if not clean_account:
+        return format_vapi_response(
+            "Invalid account number structure. Ask the user to state only the numerical digits of their account.",
+            tool_call_id,
+            is_webhook
+        )
 
     try:
         res = supabase.table("forexdata").select("*").eq("account_number", clean_account).execute()
@@ -131,7 +146,7 @@ async def trigger_otp(request: Request):
 
     if not res.data:
         return format_vapi_response(
-            f"Account number {clean_account} was not found in our database. Ask the user to double check their account number.",
+            f"Account number {clean_account} was not found in our records. Please ask the user to double check their account number.",
             tool_call_id,
             is_webhook
         )
@@ -144,13 +159,13 @@ async def trigger_otp(request: Request):
         send_email_otp(user_email, pin)
     except Exception as e:
         return format_vapi_response(
-            f"Account {clean_account} found, but sending the security email failed: {str(e)}",
+            f"Account {clean_account} located, but emailing the security code failed: {str(e)}",
             tool_call_id,
             is_webhook
         )
 
     return format_vapi_response(
-        f"Account number {clean_account} has been verified and an OTP security code was emailed to the user. Ask the user to provide the 4-digit security code.",
+        f"SUCCESS: Account {clean_account} verified and a 4-digit security code was emailed to the user. Ask the user to state the 4-digit security code they received.",
         tool_call_id,
         is_webhook
     )
@@ -164,12 +179,21 @@ async def verify_otp(request: Request):
 
     args, tool_call_id, is_webhook = parse_vapi_or_flat_payload(data)
 
-    raw_pin = args.get("pin") or args.get("otp") or args.get("code")
-    raw_account = args.get("account_number") or args.get("accountNumber")
+    raw_pin = (
+        args.get("pin") 
+        or args.get("otp") 
+        or args.get("code") 
+        or args.get("otp_code")
+    )
+    raw_account = (
+        args.get("account_number") 
+        or args.get("accountNumber")
+        or args.get("account")
+    )
 
     if not raw_pin:
         return format_vapi_response(
-            "PIN code was not provided. Ask the user for their 4-digit OTP code.",
+            "Security code missing. Please ask the user to clearly speak their 4-digit security code.",
             tool_call_id,
             is_webhook
         )
@@ -177,7 +201,7 @@ async def verify_otp(request: Request):
     clean_pin = "".join(filter(str.isdigit, str(raw_pin)))
     clean_account = "".join(filter(str.isdigit, str(raw_account))) if raw_account else None
 
-    # Query DB with account_number if available, otherwise search strictly by PIN
+    # Query DB with account_number if provided, else query directly by PIN
     query = supabase.table("forexdata").select("*").eq("pin", clean_pin)
     if clean_account:
         query = query.eq("account_number", clean_account)
@@ -189,7 +213,7 @@ async def verify_otp(request: Request):
 
     if not res.data:
         return format_vapi_response(
-            "Access denied. The PIN provided is incorrect. Please ask the user to re-enter their PIN.",
+            "Access denied: The security PIN provided is incorrect. Please ask the user to re-check their email and state the 4-digit code again.",
             tool_call_id,
             is_webhook
         )
@@ -199,7 +223,7 @@ async def verify_otp(request: Request):
     issue = record.get("issue", "None")
 
     return format_vapi_response(
-        f"Access granted! OTP verified successfully. Account Status: {account_status}. Account Issue: {issue}.",
+        f"SUCCESS: OTP verified and access granted! Account Status: {account_status}. Issue details: {issue}. Do NOT ask for the PIN again.",
         tool_call_id,
         is_webhook
     )

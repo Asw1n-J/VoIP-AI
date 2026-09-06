@@ -172,10 +172,15 @@ async def trigger_otp(request: Request):
 
 @app.post("/verify-otp")
 async def verify_otp(request: Request):
-    try:
-        data = await request.json()
-    except Exception:
+    # Safe JSON body extraction to prevent JSONDecodeError
+    body = await request.body()
+    if not body:
         data = {}
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
 
     args, tool_call_id, is_webhook = parse_vapi_or_flat_payload(data)
 
@@ -191,15 +196,16 @@ async def verify_otp(request: Request):
         or args.get("account")
     )
 
-    if not raw_pin:
+    clean_pin = "".join(filter(str.isdigit, str(raw_pin))) if raw_pin else ""
+    clean_account = "".join(filter(str.isdigit, str(raw_account))) if raw_account else None
+
+    # Guard against early Vapi speech execution (fewer than 4 digits)
+    if len(clean_pin) < 4:
         return format_vapi_response(
-            "Security code missing. Please ask the user to clearly speak their 4-digit security code.",
+            "Waiting for the user to finish speaking all 4 digits of their security code. Do NOT say the code is incorrect yet.",
             tool_call_id,
             is_webhook
         )
-
-    clean_pin = "".join(filter(str.isdigit, str(raw_pin)))
-    clean_account = "".join(filter(str.isdigit, str(raw_account))) if raw_account else None
 
     # Query DB with account_number if provided, else query directly by PIN
     query = supabase.table("forexdata").select("*").eq("pin", clean_pin)
@@ -227,3 +233,62 @@ async def verify_otp(request: Request):
         tool_call_id,
         is_webhook
     )
+
+@app.post("/exchange-rate")
+async def get_exchange_rate(request: Request):
+    # 1. Safe JSON body extraction to prevent JSONDecodeError
+    body = await request.body()
+    if not body:
+        data = {}
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+    args, tool_call_id, is_webhook = parse_vapi_or_flat_payload(data)
+
+    # 2. Extract arguments safely
+    from_curr = str(args.get("from_currency") or args.get("from") or "USD").upper().strip()
+    to_curr = str(args.get("to_currency") or args.get("to") or "EUR").upper().strip()
+    
+    raw_amount = args.get("amount") or 1.0
+    try:
+        amount = float(raw_amount)
+    except (ValueError, TypeError):
+        amount = 1.0
+
+    # 3. Call free live Forex API (No API key needed)
+    try:
+        url = f"https://open.er-api.com/v6/latest/{from_curr}"
+        response = requests.get(url, timeout=5)
+
+        # Check if external response body is non-empty before parsing
+        if response.status_code == 200 and response.text.strip():
+            api_data = response.json()
+            rates = api_data.get("rates", {})
+        else:
+            rates = {}
+
+        if to_curr not in rates:
+            return format_vapi_response(
+                f"Currency code {to_curr} is not supported. Please ask the user to provide standard codes like USD, EUR, or GBP.",
+                tool_call_id,
+                is_webhook
+            )
+
+        unit_rate = round(rates[to_curr], 4)
+        converted_total = round(amount * unit_rate, 2)
+
+        return format_vapi_response(
+            f"The current exchange rate from {from_curr} to {to_curr} is {unit_rate}. {amount} {from_curr} equals {converted_total} {to_curr}.",
+            tool_call_id,
+            is_webhook
+        )
+
+    except Exception as e:
+        return format_vapi_response(
+            f"Unable to retrieve live exchange rates at the moment due to an external network error: {str(e)}",
+            tool_call_id,
+            is_webhook
+        )

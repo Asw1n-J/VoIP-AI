@@ -98,7 +98,6 @@
                 ? JSON.parse(func.arguments)
                 : func.arguments;
 
-            // TOOL 1: Trigger OTP
             if (
               func.name === "trigger_otp" ||
               func.name === "return_extracted_data"
@@ -147,7 +146,6 @@
               }
             }
 
-            // TOOL 2: Verify OTP
             if (func.name === "verify_otp") {
               updateStatus("Verifying OTP...");
 
